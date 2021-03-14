@@ -26,5 +26,9 @@
 //! [hbase-copr]: https://blogs.apache.org/hbase/entry/coprocessor_introduction
 
 mod endpoint;
+mod plugin_api;
+mod plugin_manager;
+mod storage_api;
+mod storage_impl;
 
 pub use self::endpoint::CoprV2Endpoint;
