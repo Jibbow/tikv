@@ -242,6 +242,7 @@ members = [
   "components/test_raftstore",
   "components/test_storage",
   "components/test_coprocessor",
+  "components/test_coprocessor_plugin_api",
   "components/test_sst_importer",
   "components/test_util",
   "components/test_pd",

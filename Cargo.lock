@@ -4899,6 +4899,10 @@ dependencies = [
 ]
 
 [[package]]
+name = "test_coprocessor_plugin_api"
+version = "0.0.1"
+
+[[package]]
 name = "test_pd"
 version = "0.0.1"
 dependencies = [
