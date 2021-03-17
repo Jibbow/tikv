@@ -1,9 +1,17 @@
 use coprocessor_plugin_api::*;
+use std::convert::TryInto;
 
 #[derive(Default)]
 struct ExamplePlugin;
 
 impl CoprocessorPlugin for ExamplePlugin {
+    fn create() -> Self
+    where
+        Self: Sized,
+    {
+        ExamplePlugin::default()
+    }
+
     fn name(&self) -> &'static str {
         "example-plugin"
     }
@@ -18,4 +26,4 @@ impl CoprocessorPlugin for ExamplePlugin {
     }
 }
 
-declare_plugin!(ExamplePlugin::default());
+declare_plugin!(ExamplePlugin);
