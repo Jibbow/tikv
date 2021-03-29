@@ -100,12 +100,27 @@ impl CoprocessorPlugin for LoadedPlugin {
 
 #[cfg(test)]
 mod tests {
+    use tempfile::NamedTempFile;
     use super::*;
-    use coprocessor_plugin_api::pkgname_to_libname;
+    use std::io::Write;
+    use std::path::PathBuf;
+
+    #[cfg(target_os = "linux")]
+    const EXAMPLE_LIB_CONTENT: &[u8] = include_bytes!("../../target/debug/libexample_plugin.so");
+    #[cfg(target_os = "macos")]
+    const EXAMPLE_LIB_CONTENT: &[u8] = include_bytes!("../../target/debug/libexample_plugin.dylib");
+
+    fn get_library_file() -> (PathBuf, NamedTempFile) {
+        let mut file = tempfile::NamedTempFile::new().unwrap();
+        file.write_all(EXAMPLE_LIB_CONTENT).unwrap();
+        file.flush().unwrap();
+        (file.path().to_path_buf(), file)
+    }
 
     #[test]
     fn load_plugin() {
-        let lib = unsafe { Library::new(pkgname_to_libname("example-plugin")).unwrap() };
+        let (lib_path, _lib_file) = get_library_file();
+        let lib = unsafe { Library::new(lib_path).unwrap() };
         let loaded_plugin = unsafe { LoadedPlugin::new(lib).unwrap() };
         let plugin_name = loaded_plugin.name();
 
@@ -114,10 +129,9 @@ mod tests {
 
     #[test]
     fn plugin_registry_load_and_get_plugin() {
+        let (lib_path, _lib_file) = get_library_file();
         let mut plugin_registry = PluginRegistry::default();
-        let plugin_name = plugin_registry
-            .load_plugin(pkgname_to_libname("example-plugin"))
-            .unwrap();
+        let plugin_name = plugin_registry.load_plugin(lib_path).unwrap();
         let plugin = plugin_registry.get_plugin(plugin_name).unwrap();
 
         assert_eq!(plugin.name(), "example-plugin");
