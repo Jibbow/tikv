@@ -19,6 +19,7 @@ pub type PluginConstructorSignature =
 /// Further, it sets the `#[global_allocator]` of the plugin to use the hosts
 /// allocator. This makes passing owned data between TiKV and plugin easier
 /// but at the cost of not being able to use a custom allocator.
+#[cfg(crate_type="dylib")]
 #[macro_export]
 macro_rules! declare_plugin {
     ($plugin_ctor:expr) => {
@@ -36,6 +37,12 @@ macro_rules! declare_plugin {
             Box::into_raw(boxed)
         }
     };
+}
+
+#[cfg(not(crate_type="dylib"))]
+#[macro_export]
+macro_rules! declare_plugin {
+    ($plugin_ctor:expr) => {}
 }
 
 /// Transforms the name of a package into the name of the compiled library.

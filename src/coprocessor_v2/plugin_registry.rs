@@ -105,6 +105,10 @@ mod tests {
     use std::path::PathBuf;
     use tempfile::NamedTempFile;
 
+    // Make sure example_plugin is built before this crate.
+    #[allow(unused_imports, clippy::single_component_path_imports)]
+    use example_plugin;
+
     #[cfg(target_os = "linux")]
     const EXAMPLE_LIB_CONTENT: &[u8] = include_bytes!("../../target/debug/libexample_plugin.so");
     #[cfg(target_os = "macos")]
