@@ -100,10 +100,10 @@ impl CoprocessorPlugin for LoadedPlugin {
 
 #[cfg(test)]
 mod tests {
-    use tempfile::NamedTempFile;
     use super::*;
     use std::io::Write;
     use std::path::PathBuf;
+    use tempfile::NamedTempFile;
 
     #[cfg(target_os = "linux")]
     const EXAMPLE_LIB_CONTENT: &[u8] = include_bytes!("../../target/debug/libexample_plugin.so");
