@@ -27,6 +27,9 @@ export DYLD_LIBRARY_PATH="${DYLD_LIBRARY_PATH}:${LOCAL_DIR}/lib"
 export LOG_LEVEL=DEBUG
 export RUST_BACKTRACE=1
 
+# Tests in TiKV relies on `include_bytes!()` on example_plugin so it has to be built in advance.
+cargo build -p example_plugin
+
 cargo test --workspace \
     --exclude fuzzer-honggfuzz --exclude fuzzer-afl --exclude fuzzer-libfuzzer \
     --features "${TIKV_ENABLE_FEATURES}" ${EXTRA_CARGO_ARGS} "$@"
