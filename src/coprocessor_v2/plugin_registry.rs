@@ -98,7 +98,7 @@ impl CoprocessorPlugin for LoadedPlugin {
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, feature = "test-plugin"))]
 mod tests {
     use super::*;
     use coprocessor_plugin_api::pkgname_to_libname;

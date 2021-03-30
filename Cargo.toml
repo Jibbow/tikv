@@ -95,6 +95,7 @@ test-engines-rocksdb = [
 test-engines-panic = [
   "engine_test/test-engines-panic",
 ]
+test-plugin = []
 bcc-iosnoop = [
   "file_system/bcc-iosnoop",
 ]
