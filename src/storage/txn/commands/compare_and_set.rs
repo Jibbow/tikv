@@ -3,7 +3,6 @@
 use crate::storage::kv::{Modify, WriteData};
 use crate::storage::lock_manager::LockManager;
 use crate::storage::raw;
-use crate::storage::raw::ttl::convert_to_expire_ts;
 use crate::storage::txn::commands::{
     Command, CommandExt, ResponsePolicy, TypedCommand, WriteCommand, WriteContext, WriteResult,
 };
@@ -13,12 +12,11 @@ use engine_traits::CfName;
 use txn_types::{Key, Value};
 
 command! {
-    /// RawCompareAndSwap checks whether the previous value of the key equals to the given value.
-    /// If they are equal, write the new value. The bool indicates whether they are equal.
-    /// The previous value is always returned regardless of whether the new value is set.
-    RawCompareAndSwap:
+    /// CompareAndSet to check whether the previous value of the key equals to the given value.
+    /// If they are equal, write the new value, otherwise return the previous value.
+    RawCompareAndSet:
         cmd_ty => (Option<Value>, bool),
-        display => "kv::command::raw_compare_and_swap {:?}", (ctx),
+        display => "kv::command::raw_compare_and_set {:?}", (ctx),
         content => {
             cf: CfName,
             key: Key,
@@ -28,9 +26,9 @@ command! {
         }
 }
 
-impl CommandExt for RawCompareAndSwap {
+impl CommandExt for RawCompareAndSet {
     ctx!();
-    tag!(raw_compare_and_swap);
+    tag!(raw_compare_and_set);
     gen_lock!(key);
 
     fn write_bytes(&self) -> usize {
@@ -38,12 +36,18 @@ impl CommandExt for RawCompareAndSwap {
     }
 }
 
-impl<S: Snapshot, L: LockManager> WriteCommand<S, L> for RawCompareAndSwap {
+impl<S: Snapshot, L: LockManager> WriteCommand<S, L> for RawCompareAndSet {
     fn process_write(self, snapshot: S, _: WriteContext<'_, L>) -> Result<WriteResult> {
         let (cf, key, value, previous_value, ctx) =
             (self.cf, self.key, self.value, self.previous_value, self.ctx);
         let mut data = vec![];
-        let expire_ts = self.ttl.map(convert_to_expire_ts);
+        let expire_ts = self.ttl.map(|ttl| {
+            if ttl > 0 {
+                ttl + raw::TTLSnapshot::<S>::current_ts()
+            } else {
+                0
+            }
+        });
         let old_value = if expire_ts.is_some() {
             raw::TTLSnapshot::from(snapshot).get_cf(cf, &key)?
         } else {
@@ -56,17 +60,17 @@ impl<S: Snapshot, L: LockManager> WriteCommand<S, L> for RawCompareAndSwap {
                 m.with_ttl(ts);
             }
             data.push(m);
-            ProcessResult::RawCompareAndSwapRes {
-                previous_value: old_value,
-                succeed: true,
+            ProcessResult::RawCompareAndSetRes {
+                previous_value: None,
+                not_equal: false,
             }
         } else {
-            ProcessResult::RawCompareAndSwapRes {
+            ProcessResult::RawCompareAndSetRes {
                 previous_value: old_value,
-                succeed: false,
+                not_equal: true,
             }
         };
-        fail_point!("txn_commands_compare_and_swap");
+        fail_point!("txn_commands_compare_and_set");
         let rows = data.len();
         let to_be_write = WriteData::from_modifies(data);
         Ok(WriteResult {
@@ -95,8 +99,7 @@ mod tests {
         let engine = TestEngineBuilder::new().build().unwrap();
         let cm = concurrency_manager::ConcurrencyManager::new(1.into());
         let key = b"k";
-
-        let cmd = RawCompareAndSwap::new(
+        let cmd = RawCompareAndSet::new(
             CF_DEFAULT,
             Key::from_encoded(key.to_vec()),
             None,
@@ -104,11 +107,10 @@ mod tests {
             None,
             Context::default(),
         );
-        let (prev_val, succeed) = sched_command(&engine, cm.clone(), cmd).unwrap();
-        assert!(prev_val.is_none());
-        assert!(succeed);
 
-        let cmd = RawCompareAndSwap::new(
+        let ret = sched_command(&engine, cm.clone(), cmd).unwrap();
+        assert!(ret.is_none());
+        let cmd = RawCompareAndSet::new(
             CF_DEFAULT,
             Key::from_encoded(key.to_vec()),
             None,
@@ -116,28 +118,16 @@ mod tests {
             None,
             Context::default(),
         );
-        let (prev_val, succeed) = sched_command(&engine, cm.clone(), cmd).unwrap();
-        assert_eq!(prev_val, Some(b"v1".to_vec()));
-        assert!(!succeed);
-
-        let cmd = RawCompareAndSwap::new(
-            CF_DEFAULT,
-            Key::from_encoded(key.to_vec()),
-            Some(b"v1".to_vec()),
-            b"v3".to_vec(),
-            None,
-            Context::default(),
-        );
-        let (prev_val, succeed) = sched_command(&engine, cm, cmd).unwrap();
-        assert_eq!(prev_val, Some(b"v1".to_vec()));
-        assert!(succeed);
+        let ret = sched_command(&engine, cm, cmd).unwrap();
+        assert!(ret.is_some());
+        assert_eq!(ret.unwrap(), b"v1".to_vec());
     }
 
     pub fn sched_command<E: Engine>(
         engine: &E,
         cm: ConcurrencyManager,
         cmd: TypedCommand<(Option<Value>, bool)>,
-    ) -> Result<(Option<Value>, bool)> {
+    ) -> Result<Option<Value>> {
         let snap = engine.snapshot(Default::default())?;
         use crate::storage::DummyLockManager;
         use kvproto::kvrpcpb::ExtraOp;
@@ -151,17 +141,18 @@ mod tests {
         };
         let ret = cmd.cmd.process_write(snap, context)?;
         match ret.pr {
-            ProcessResult::RawCompareAndSwapRes {
+            ProcessResult::RawCompareAndSetRes {
                 previous_value,
-                succeed,
+                not_equal,
             } => {
-                if succeed {
-                    let ctx = Context::default();
-                    engine.write(&ctx, ret.to_be_write).unwrap();
+                if not_equal {
+                    return Ok(previous_value);
                 }
-                Ok((previous_value, succeed))
             }
             _ => unreachable!(),
-        }
+        };
+        let ctx = Context::default();
+        engine.write(&ctx, ret.to_be_write).unwrap();
+        Ok(None)
     }
 }

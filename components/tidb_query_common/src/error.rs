@@ -1,25 +1,25 @@
 // Copyright 2019 TiKV Project Authors. Licensed under Apache-2.0.
 
 use std::convert::Infallible;
-
-use error_code::{self, ErrorCode, ErrorCodeExt};
-use thiserror::Error;
 use tikv_util::impl_format_delegate_newtype;
 
-#[derive(Debug, Error)]
+use error_code::{self, ErrorCode, ErrorCodeExt};
+use failure::Fail;
+
+#[derive(Fail, Debug)]
 pub enum EvaluateError {
-    #[error("Execution terminated due to exceeding the deadline")]
+    #[fail(display = "Execution terminated due to exceeding the deadline")]
     DeadlineExceeded,
 
-    #[error("Invalid {charset} character string")]
+    #[fail(display = "Invalid {} character string", charset)]
     InvalidCharacterString { charset: String },
 
     /// This variant is only a compatible layer for existing CodecError.
     /// Ideally each error kind should occupy an enum variant.
-    #[error("{msg}")]
+    #[fail(display = "{}", msg)]
     Custom { code: i32, msg: String },
 
-    #[error("{0}")]
+    #[fail(display = "{}", _0)]
     Other(String),
 }
 
@@ -81,19 +81,26 @@ impl ErrorCodeExt for EvaluateError {
     }
 }
 
-#[derive(Debug, Error)]
-#[error(transparent)]
-pub struct StorageError(#[from] pub anyhow::Error);
+#[derive(Fail, Debug)]
+#[fail(display = "{}", _0)]
+pub struct StorageError(pub failure::Error);
+
+impl From<failure::Error> for StorageError {
+    #[inline]
+    fn from(err: failure::Error) -> Self {
+        StorageError(err)
+    }
+}
 
 /// We want to restrict the type of errors to be either a `StorageError` or `EvaluateError`, thus
 /// `failure::Error` is not used. Instead, we introduce our own error enum.
-#[derive(Debug, Error)]
+#[derive(Fail, Debug)]
 pub enum ErrorInner {
-    #[error("Storage error: {0}")]
-    Storage(#[source] StorageError),
+    #[fail(display = "Storage error: {}", _0)]
+    Storage(#[fail(cause)] StorageError),
 
-    #[error("Evaluate error: {0}")]
-    Evaluate(#[source] EvaluateError),
+    #[fail(display = "Evaluate error: {}", _0)]
+    Evaluate(#[fail(cause)] EvaluateError),
 }
 
 #[derive(Debug)]

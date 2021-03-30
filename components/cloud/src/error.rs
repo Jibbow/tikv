@@ -3,7 +3,6 @@ use std::io::{Error as IoError, ErrorKind};
 use std::{error, result};
 
 use protobuf::ProtobufError;
-use thiserror::Error;
 
 use error_code::{self, ErrorCode, ErrorCodeExt};
 use tikv_util::stream::RetryError;
@@ -13,35 +12,35 @@ pub type Result<T> = result::Result<T, Error>;
 pub trait ErrorTrait: Debug + Display + ErrorCodeExt + RetryError + Send + Sync + 'static {}
 
 /// The error type for the cloud.
-#[derive(Debug, Error)]
+#[derive(Debug, Fail)]
 pub enum Error {
-    #[error("Other error {0}")]
-    Other(#[from] Box<dyn error::Error + Sync + Send>),
-    #[error("IO error {0}")]
-    Io(#[from] IoError),
-    #[error("Protobuf error {0}")]
-    Proto(#[from] ProtobufError),
-    #[error("API Timeout error: {0}")]
+    #[fail(display = "Other error {}", _0)]
+    Other(Box<dyn error::Error + Sync + Send>),
+    #[fail(display = "IO error {}", _0)]
+    Io(IoError),
+    #[fail(display = "Protobuf error {}", _0)]
+    Proto(ProtobufError),
+    #[fail(display = "API Timeout error: {}", _0)]
     ApiTimeout(Box<dyn error::Error + Sync + Send>),
-    #[error("API internal error: {0}")]
+    #[fail(display = "API internal error: {}", _0)]
     ApiInternal(Box<dyn error::Error + Sync + Send>),
-    #[error("API not found: {0}")]
+    #[fail(display = "API not found: {}", _0)]
     ApiNotFound(Box<dyn error::Error + Sync + Send>),
-    #[error("API auth: {0}")]
+    #[fail(display = "API auth: {}", _0)]
     ApiAuthentication(Box<dyn error::Error + Sync + Send>),
-    #[error("Key error: {0}")]
+    #[fail(display = "Key error: {}", _0)]
     KmsError(KmsError),
 }
 
 impl ErrorTrait for Error {}
 
-#[derive(Debug, Error)]
+#[derive(Debug, Fail)]
 pub enum KmsError {
-    #[error("Wrong master key {0}")]
+    #[fail(display = "Wrong master key {}", _0)]
     WrongMasterKey(Box<dyn error::Error + Sync + Send>),
-    #[error("Empty key {0}")]
+    #[fail(display = "Empty key {}", _0)]
     EmptyKey(String),
-    #[error("Kms error {0}")]
+    #[fail(display = "Kms error {}", _0)]
     Other(Box<dyn error::Error + Sync + Send>),
 }
 
@@ -52,6 +51,24 @@ impl From<Error> for IoError {
             other => IoError::new(ErrorKind::Other, format!("{}", other)),
         }
     }
+}
+
+macro_rules! impl_from {
+    ($($inner:ty => $container:ident,)+) => {
+        $(
+            impl From<$inner> for Error {
+                fn from(inr: $inner) -> Error {
+                    Error::$container(inr)
+                }
+            }
+        )+
+    };
+}
+
+impl_from! {
+    Box<dyn error::Error + Sync + Send> => Other,
+    IoError => Io,
+    ProtobufError => Proto,
 }
 
 impl ErrorCodeExt for KmsError {

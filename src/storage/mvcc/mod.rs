@@ -327,8 +327,7 @@ pub mod tests {
     use super::*;
     use crate::storage::kv::{Engine, Modify, ScanMode, SnapContext, Snapshot, WriteData};
     use engine_traits::CF_WRITE;
-    use kvproto::kvrpcpb::Context;
-    use std::borrow::Cow;
+    use kvproto::kvrpcpb::{Context, IsolationLevel};
     use txn_types::Key;
 
     pub fn write<E: Engine>(engine: &E, ctx: &Context, modifies: Vec<Modify>) {
@@ -343,70 +342,54 @@ pub mod tests {
         let ts = ts.into();
         let ctx = SnapContext::default();
         let snapshot = engine.snapshot(ctx).unwrap();
-        let mut reader = SnapshotReader::new(ts, snapshot, true);
-        let key = &Key::from_raw(key);
-
-        check_lock(&mut reader, key, ts).unwrap();
-        assert_eq!(reader.get(key, ts).unwrap().unwrap(), expect);
-    }
-
-    pub fn must_get_no_lock_check<E: Engine>(
-        engine: &E,
-        key: &[u8],
-        ts: impl Into<TimeStamp>,
-        expect: &[u8],
-    ) {
-        let ts = ts.into();
-        let ctx = SnapContext::default();
-        let snapshot = engine.snapshot(ctx).unwrap();
-        let mut reader = SnapshotReader::new(ts, snapshot, true);
+        let mut reader = MvccReader::new(snapshot, None, true, IsolationLevel::Si);
         assert_eq!(
-            reader.get(&Key::from_raw(key), ts).unwrap().unwrap(),
+            reader
+                .get(&Key::from_raw(key), ts, Some(ts), false)
+                .unwrap()
+                .unwrap(),
             expect
         );
     }
 
-    /// Checks if there is a lock which blocks reading the key at the given ts.
-    /// Returns the blocking lock as the `Err` variant.
-    fn check_lock(
-        reader: &mut SnapshotReader<impl Snapshot>,
-        key: &Key,
-        ts: TimeStamp,
-    ) -> Result<()> {
-        if let Some(lock) = reader.load_lock(key)? {
-            if let Err(e) = Lock::check_ts_conflict(Cow::Owned(lock), key, ts, &Default::default())
-            {
-                return Err(e.into());
-            }
-        }
-        Ok(())
+    pub fn must_get_rc<E: Engine>(engine: &E, key: &[u8], ts: impl Into<TimeStamp>, expect: &[u8]) {
+        let ts = ts.into();
+        let ctx = SnapContext::default();
+        let snapshot = engine.snapshot(ctx).unwrap();
+        let mut reader = MvccReader::new(snapshot, None, true, IsolationLevel::Rc);
+        assert_eq!(
+            reader
+                .get(&Key::from_raw(key), ts, Some(ts), false)
+                .unwrap()
+                .unwrap(),
+            expect
+        );
     }
 
     pub fn must_get_none<E: Engine>(engine: &E, key: &[u8], ts: impl Into<TimeStamp>) {
         let ts = ts.into();
         let ctx = SnapContext::default();
         let snapshot = engine.snapshot(ctx).unwrap();
-        let mut reader = SnapshotReader::new(ts, snapshot, true);
-        let key = &Key::from_raw(key);
-        check_lock(&mut reader, key, ts).unwrap();
-        assert!(reader.get(key, ts).unwrap().is_none());
+        let mut reader = MvccReader::new(snapshot, None, true, IsolationLevel::Si);
+        assert!(reader
+            .get(&Key::from_raw(key), ts, Some(ts), false)
+            .unwrap()
+            .is_none());
     }
 
     pub fn must_get_err<E: Engine>(engine: &E, key: &[u8], ts: impl Into<TimeStamp>) {
         let ts = ts.into();
         let ctx = SnapContext::default();
         let snapshot = engine.snapshot(ctx).unwrap();
-        let mut reader = SnapshotReader::new(ts, snapshot, true);
-        let key = &Key::from_raw(key);
-        if check_lock(&mut reader, key, ts).is_err() {
-            return;
-        }
-        assert!(reader.get(key, ts).is_err());
+        let mut reader = MvccReader::new(snapshot, None, true, IsolationLevel::Si);
+        assert!(reader
+            .get(&Key::from_raw(key), ts, Some(ts), false)
+            .is_err());
     }
 
     pub fn must_locked<E: Engine>(engine: &E, key: &[u8], start_ts: impl Into<TimeStamp>) -> Lock {
         let snapshot = engine.snapshot(Default::default()).unwrap();
-        let mut reader = MvccReader::new(snapshot, None, true);
+        let mut reader = MvccReader::new(snapshot, None, true, IsolationLevel::Si);
         let lock = reader.load_lock(&Key::from_raw(key)).unwrap().unwrap();
         assert_eq!(lock.ts, start_ts.into());
         assert_ne!(lock.lock_type, LockType::Pessimistic);
@@ -420,7 +403,7 @@ pub mod tests {
         ttl: u64,
     ) {
         let snapshot = engine.snapshot(Default::default()).unwrap();
-        let mut reader = MvccReader::new(snapshot, None, true);
+        let mut reader = MvccReader::new(snapshot, None, true, IsolationLevel::Si);
         let lock = reader.load_lock(&Key::from_raw(key)).unwrap().unwrap();
         assert_eq!(lock.ts, start_ts.into());
         assert_ne!(lock.lock_type, LockType::Pessimistic);
@@ -436,7 +419,7 @@ pub mod tests {
         is_pessimistic: bool,
     ) {
         let snapshot = engine.snapshot(Default::default()).unwrap();
-        let mut reader = MvccReader::new(snapshot, None, true);
+        let mut reader = MvccReader::new(snapshot, None, true, IsolationLevel::Si);
         let lock = reader.load_lock(&Key::from_raw(key)).unwrap().unwrap();
         assert_eq!(lock.ts, start_ts.into());
         assert_eq!(lock.ttl, ttl);
@@ -450,7 +433,7 @@ pub mod tests {
 
     pub fn must_unlocked<E: Engine>(engine: &E, key: &[u8]) {
         let snapshot = engine.snapshot(Default::default()).unwrap();
-        let mut reader = MvccReader::new(snapshot, None, true);
+        let mut reader = MvccReader::new(snapshot, None, true, IsolationLevel::Si);
         assert!(reader.load_lock(&Key::from_raw(key)).unwrap().is_none());
     }
 
@@ -491,7 +474,7 @@ pub mod tests {
 
     pub fn must_seek_write_none<E: Engine>(engine: &E, key: &[u8], ts: impl Into<TimeStamp>) {
         let snapshot = engine.snapshot(Default::default()).unwrap();
-        let mut reader = MvccReader::new(snapshot, None, true);
+        let mut reader = MvccReader::new(snapshot, None, true, IsolationLevel::Si);
         assert!(reader
             .seek_write(&Key::from_raw(key), ts.into())
             .unwrap()
@@ -507,7 +490,7 @@ pub mod tests {
         write_type: WriteType,
     ) {
         let snapshot = engine.snapshot(Default::default()).unwrap();
-        let mut reader = MvccReader::new(snapshot, None, true);
+        let mut reader = MvccReader::new(snapshot, None, true, IsolationLevel::Si);
         let (t, write) = reader
             .seek_write(&Key::from_raw(key), ts.into())
             .unwrap()
@@ -524,9 +507,9 @@ pub mod tests {
         commit_ts: impl Into<TimeStamp>,
     ) {
         let snapshot = engine.snapshot(Default::default()).unwrap();
-        let mut reader = SnapshotReader::new(start_ts.into(), snapshot, true);
+        let mut reader = MvccReader::new(snapshot, None, true, IsolationLevel::Si);
         let (ts, write_type) = reader
-            .get_txn_commit_record(&Key::from_raw(key))
+            .get_txn_commit_record(&Key::from_raw(key), start_ts.into())
             .unwrap()
             .info()
             .unwrap();
@@ -540,9 +523,9 @@ pub mod tests {
         start_ts: impl Into<TimeStamp>,
     ) {
         let snapshot = engine.snapshot(Default::default()).unwrap();
-        let mut reader = SnapshotReader::new(start_ts.into(), snapshot, true);
+        let mut reader = MvccReader::new(snapshot, None, true, IsolationLevel::Si);
 
-        let ret = reader.get_txn_commit_record(&Key::from_raw(key));
+        let ret = reader.get_txn_commit_record(&Key::from_raw(key), start_ts.into());
         assert!(ret.is_ok());
         match ret.unwrap().info() {
             None => {}
@@ -553,12 +536,12 @@ pub mod tests {
     }
 
     pub fn must_get_rollback_ts<E: Engine>(engine: &E, key: &[u8], start_ts: impl Into<TimeStamp>) {
-        let start_ts = start_ts.into();
         let snapshot = engine.snapshot(Default::default()).unwrap();
-        let mut reader = SnapshotReader::new(start_ts, snapshot, true);
+        let mut reader = MvccReader::new(snapshot, None, true, IsolationLevel::Si);
 
+        let start_ts = start_ts.into();
         let (ts, write_type) = reader
-            .get_txn_commit_record(&Key::from_raw(key))
+            .get_txn_commit_record(&Key::from_raw(key), start_ts)
             .unwrap()
             .info()
             .unwrap();
@@ -572,10 +555,10 @@ pub mod tests {
         start_ts: impl Into<TimeStamp>,
     ) {
         let snapshot = engine.snapshot(Default::default()).unwrap();
-        let mut reader = SnapshotReader::new(start_ts.into(), snapshot, true);
+        let mut reader = MvccReader::new(snapshot, None, true, IsolationLevel::Si);
 
         let ret = reader
-            .get_txn_commit_record(&Key::from_raw(key))
+            .get_txn_commit_record(&Key::from_raw(key), start_ts.into())
             .unwrap()
             .info();
         assert_eq!(ret, None);
@@ -588,7 +571,7 @@ pub mod tests {
         protected: bool,
     ) {
         let snapshot = engine.snapshot(Default::default()).unwrap();
-        let mut reader = MvccReader::new(snapshot, None, true);
+        let mut reader = MvccReader::new(snapshot, None, true, IsolationLevel::Si);
 
         let start_ts = start_ts.into();
         let (ts, write) = reader
@@ -609,7 +592,7 @@ pub mod tests {
         gc_fence: Option<T>,
     ) {
         let snapshot = engine.snapshot(Default::default()).unwrap();
-        let mut reader = MvccReader::new(snapshot, None, true);
+        let mut reader = MvccReader::new(snapshot, None, true, IsolationLevel::Si);
 
         let start_ts = start_ts.into();
         let overlapped_start_ts = overlapped_start_ts.into();
@@ -636,7 +619,8 @@ pub mod tests {
             next_start.map(|x| Key::from_raw(x).append_ts(TimeStamp::zero())),
         );
         let snapshot = engine.snapshot(Default::default()).unwrap();
-        let mut reader = MvccReader::new(snapshot, Some(ScanMode::Mixed), false);
+        let mut reader =
+            MvccReader::new(snapshot, Some(ScanMode::Mixed), false, IsolationLevel::Si);
         assert_eq!(
             reader.scan_keys(start.map(Key::from_raw), limit).unwrap(),
             expect

@@ -1,28 +1,44 @@
 // Copyright 2016 TiKV Project Authors. Licensed under Apache-2.0.
 
-use std::{error, result};
-
 use error_code::{self, ErrorCode, ErrorCodeExt};
-use thiserror::Error;
+use quick_error::quick_error;
+use std::error;
+use std::result;
 
-#[derive(Debug, Error)]
-pub enum Error {
-    #[error("{0}")]
-    Io(#[from] std::io::Error),
-    #[error("cluster {0} is already bootstrapped")]
-    ClusterBootstrapped(u64),
-    #[error("cluster {0} is not bootstrapped")]
-    ClusterNotBootstrapped(u64),
-    #[error("feature is not supported in other cluster components")]
-    Incompatible,
-    #[error("{0}")]
-    Grpc(#[from] grpcio::Error),
-    #[error("unknown error {0:?}")]
-    Other(#[from] Box<dyn error::Error + Sync + Send>),
-    #[error("region is not found for key {}", log_wrappers::Value::key(.0))]
-    RegionNotFound(Vec<u8>),
-    #[error("store is tombstone {0:?}")]
-    StoreTombstone(String),
+quick_error! {
+    #[derive(Debug)]
+    pub enum Error {
+        Io(err: std::io::Error) {
+            from()
+            cause(err)
+            display("{}", err)
+        }
+        ClusterBootstrapped(cluster_id: u64) {
+            display("cluster {} is already bootstrapped", cluster_id)
+        }
+        ClusterNotBootstrapped(cluster_id: u64) {
+            display("cluster {} is not bootstrapped", cluster_id)
+        }
+        Incompatible {
+            display("feature is not supported in other cluster components")
+        }
+        Grpc(err: grpcio::Error) {
+            from()
+            cause(err)
+            display("{}", err)
+        }
+        Other(err: Box<dyn error::Error + Sync + Send>) {
+            from()
+            cause(err.as_ref())
+            display("unknown error {:?}", err)
+        }
+        RegionNotFound(key: Vec<u8>) {
+            display("region is not found for key {}", &log_wrappers::Value::key(key))
+        }
+        StoreTombstone(msg: String) {
+            display("store is tombstone {:?}", msg)
+        }
+    }
 }
 
 pub type Result<T> = result::Result<T, Error>;

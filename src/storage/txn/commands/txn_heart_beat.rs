@@ -2,9 +2,7 @@
 
 use crate::storage::kv::WriteData;
 use crate::storage::lock_manager::LockManager;
-use crate::storage::mvcc::{
-    Error as MvccError, ErrorInner as MvccErrorInner, MvccTxn, SnapshotReader,
-};
+use crate::storage::mvcc::{Error as MvccError, ErrorInner as MvccErrorInner, MvccTxn};
 use crate::storage::txn::commands::{
     Command, CommandExt, ResponsePolicy, TypedCommand, WriteCommand, WriteContext, WriteResult,
 };
@@ -43,9 +41,12 @@ impl CommandExt for TxnHeartBeat {
 impl<S: Snapshot, L: LockManager> WriteCommand<S, L> for TxnHeartBeat {
     fn process_write(self, snapshot: S, context: WriteContext<'_, L>) -> Result<WriteResult> {
         // TxnHeartBeat never remove locks. No need to wake up waiters.
-        let mut txn = MvccTxn::new(self.start_ts, context.concurrency_manager);
-        let mut reader =
-            SnapshotReader::new(self.start_ts, snapshot, !self.ctx.get_not_fill_cache());
+        let mut txn = MvccTxn::new(
+            snapshot,
+            self.start_ts,
+            !self.ctx.get_not_fill_cache(),
+            context.concurrency_manager,
+        );
         fail_point!("txn_heart_beat", |err| Err(
             crate::storage::mvcc::Error::from(crate::storage::mvcc::txn::make_txn_error(
                 err,
@@ -55,7 +56,7 @@ impl<S: Snapshot, L: LockManager> WriteCommand<S, L> for TxnHeartBeat {
             .into()
         ));
 
-        let lock = match reader.load_lock(&self.primary_key)? {
+        let lock = match txn.reader.load_lock(&self.primary_key)? {
             Some(mut lock) if lock.ts == self.start_ts => {
                 if lock.ttl < self.advise_ttl {
                     lock.ttl = self.advise_ttl;
@@ -64,7 +65,7 @@ impl<S: Snapshot, L: LockManager> WriteCommand<S, L> for TxnHeartBeat {
                 lock
             }
             _ => {
-                context.statistics.add(&reader.take_statistics());
+                context.statistics.add(&txn.take_statistics());
                 return Err(MvccError::from(MvccErrorInner::TxnNotFound {
                     start_ts: self.start_ts,
                     key: self.primary_key.into_raw()?,
@@ -73,7 +74,7 @@ impl<S: Snapshot, L: LockManager> WriteCommand<S, L> for TxnHeartBeat {
             }
         };
 
-        context.statistics.add(&reader.take_statistics());
+        context.statistics.add(&txn.take_statistics());
         let pr = ProcessResult::TxnStatus {
             txn_status: TxnStatus::uncommitted(lock, false),
         };

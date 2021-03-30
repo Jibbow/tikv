@@ -94,23 +94,23 @@ impl From<Error> for ErrorPb {
 }
 
 /// The error type for backup.
-#[derive(Debug, thiserror::Error)]
+#[derive(Debug, Fail)]
 pub enum Error {
-    #[error("Other error {0}")]
-    Other(#[from] Box<dyn error::Error + Sync + Send>),
-    #[error("RocksDB error {0}")]
+    #[fail(display = "Other error {}", _0)]
+    Other(Box<dyn error::Error + Sync + Send>),
+    #[fail(display = "RocksDB error {}", _0)]
     Rocks(String),
-    #[error("IO error {0}")]
-    Io(#[from] IoError),
-    #[error("Engine error {0}")]
-    Engine(#[from] EngineError),
-    #[error("Engine error {0}")]
-    EngineTrait(#[from] EngineTraitError),
-    #[error("Transaction error {0}")]
-    Txn(#[from] TxnError),
-    #[error("ClusterID error current {current}, request {request}")]
+    #[fail(display = "IO error {}", _0)]
+    Io(IoError),
+    #[fail(display = "Engine error {}", _0)]
+    Engine(EngineError),
+    #[fail(display = "Engine error {}", _0)]
+    EngineTrait(EngineTraitError),
+    #[fail(display = "Transaction error {}", _0)]
+    Txn(TxnError),
+    #[fail(display = "ClusterID error current {}, request {}", current, request)]
     ClusterID { current: u64, request: u64 },
-    #[error("Invalid cf {cf}")]
+    #[fail(display = "Invalid cf {}", cf)]
     InvalidCf { cf: String },
 }
 
@@ -127,7 +127,12 @@ macro_rules! impl_from {
 }
 
 impl_from! {
+    Box<dyn error::Error + Sync + Send> => Other,
     String => Rocks,
+    IoError => Io,
+    EngineError => Engine,
+    EngineTraitError => EngineTrait,
+    TxnError => Txn,
 }
 
 pub type Result<T> = result::Result<T, Error>;

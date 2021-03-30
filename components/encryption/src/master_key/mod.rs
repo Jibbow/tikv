@@ -4,8 +4,6 @@ use kvproto::encryptionpb::EncryptedContent;
 
 use crate::{Error, Result};
 
-use tikv_util::box_err;
-
 /// Provide API to encrypt/decrypt key dictionary content.
 ///
 /// Can be back by KMS, or a key read from a file. If file is used, it will

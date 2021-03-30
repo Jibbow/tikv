@@ -599,7 +599,7 @@ mod tests {
         Engine, Iterator, Result as EngineResult, RocksEngine, RocksSnapshot, SnapContext,
         TestEngineBuilder, WriteData,
     };
-    use crate::storage::mvcc::{Mutation, MvccTxn, SnapshotReader};
+    use crate::storage::mvcc::{Mutation, MvccTxn};
     use crate::storage::txn::{
         commit, prewrite, CommitKind, TransactionKind, TransactionProperties,
     };
@@ -647,13 +647,11 @@ mod tests {
             // do prewrite.
             {
                 let cm = ConcurrencyManager::new(START_TS);
-                let mut txn = MvccTxn::new(START_TS, cm);
-                let mut reader = SnapshotReader::new(START_TS, self.snapshot.clone(), true);
+                let mut txn = MvccTxn::new(self.snapshot.clone(), START_TS, true, cm);
                 for key in &self.keys {
                     let key = key.as_bytes();
                     prewrite(
                         &mut txn,
-                        &mut reader,
                         &TransactionProperties {
                             start_ts: START_TS,
                             kind: TransactionKind::Optimistic(false),
@@ -677,11 +675,10 @@ mod tests {
             // do commit
             {
                 let cm = ConcurrencyManager::new(START_TS);
-                let mut txn = MvccTxn::new(START_TS, cm);
-                let mut reader = SnapshotReader::new(START_TS, self.snapshot.clone(), true);
+                let mut txn = MvccTxn::new(self.snapshot.clone(), START_TS, true, cm);
                 for key in &self.keys {
                     let key = key.as_bytes();
-                    commit(&mut txn, &mut reader, Key::from_raw(key), COMMIT_TS).unwrap();
+                    commit(&mut txn, Key::from_raw(key), COMMIT_TS).unwrap();
                 }
                 let write_data = WriteData::from_modifies(txn.into_modifies());
                 self.engine.write(&self.ctx, write_data).unwrap();

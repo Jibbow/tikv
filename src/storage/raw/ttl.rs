@@ -1,35 +1,17 @@
 // Copyright 2021 TiKV Project Authors. Licensed under Apache-2.0.
 
-use crate::storage::kv::{Iterator, Result, Snapshot, TTL_TOMBSTONE};
+use crate::storage::kv::{Iterator, Result, Snapshot};
 use crate::storage::Statistics;
 
 use engine_traits::util::{get_expire_ts, strip_expire_ts, truncate_expire_ts};
 use engine_traits::CfName;
 use engine_traits::{IterOptions, ReadOptions};
+#[cfg(not(test))]
+use tikv_util::time::UnixSecs;
 use txn_types::{Key, Value};
 
 #[cfg(test)]
-pub const TEST_CURRENT_TS: u64 = 100;
-
-pub fn convert_to_expire_ts(ttl: u64) -> u64 {
-    if ttl == 0 {
-        return 0;
-    }
-    ttl.saturating_add(current_ts())
-}
-
-#[cfg(not(test))]
-use tikv_util::time::UnixSecs;
-
-#[cfg(not(test))]
-pub fn current_ts() -> u64 {
-    UnixSecs::now().into_inner()
-}
-
-#[cfg(test)]
-pub fn current_ts() -> u64 {
-    TEST_CURRENT_TS
-}
+pub const TEST_CURRENT_TS: u64 = 15;
 
 #[derive(Clone)]
 pub struct TTLSnapshot<S: Snapshot> {
@@ -50,6 +32,18 @@ impl<S: Snapshot> TTLSnapshot<S> {
             }
             None => Ok(None),
         }
+    }
+
+    #[cfg(not(test))]
+    #[inline]
+    pub fn current_ts() -> u64 {
+        UnixSecs::now().into_inner()
+    }
+
+    #[cfg(test)]
+    #[inline]
+    pub fn current_ts() -> u64 {
+        TEST_CURRENT_TS
     }
 
     pub fn get_key_ttl_cf(
@@ -82,7 +76,7 @@ impl<S: Snapshot> From<S> for TTLSnapshot<S> {
     fn from(s: S) -> Self {
         TTLSnapshot {
             s,
-            current_ts: current_ts(),
+            current_ts: Self::current_ts(),
         }
     }
 }
@@ -136,17 +130,11 @@ impl<S: Snapshot> Snapshot for TTLSnapshot<S> {
 pub struct TTLIterator<I: Iterator> {
     i: I,
     current_ts: u64,
-
-    skip_ttl: usize,
 }
 
 impl<I: Iterator> TTLIterator<I> {
     fn new(i: I, current_ts: u64) -> Self {
-        TTLIterator {
-            i,
-            current_ts,
-            skip_ttl: 0,
-        }
+        TTLIterator { i, current_ts }
     }
 
     fn find_valid_value(&mut self, mut res: Result<bool>, forward: bool) -> Result<bool> {
@@ -158,7 +146,6 @@ impl<I: Iterator> TTLIterator<I> {
             if *res.as_ref().unwrap() {
                 let expire_ts = get_expire_ts(self.i.value())?;
                 if expire_ts != 0 && expire_ts <= self.current_ts {
-                    self.skip_ttl += 1;
                     res = if forward {
                         self.i.next()
                     } else {
@@ -170,14 +157,6 @@ impl<I: Iterator> TTLIterator<I> {
             break;
         }
         res
-    }
-}
-
-impl<I: Iterator> Drop for TTLIterator<I> {
-    fn drop(&mut self) {
-        TTL_TOMBSTONE.with(|m| {
-            *m.borrow_mut() += self.skip_ttl;
-        });
     }
 }
 
@@ -250,18 +229,18 @@ mod tests {
 
         let key1 = b"key1";
         let mut value1 = b"value1".to_vec();
-        append_expire_ts(&mut value1, 90);
+        append_expire_ts(&mut value1, 10);
         kvdb.put_cf(CF_DEFAULT, key1, &value1).unwrap();
         let mut value10 = b"value1".to_vec();
-        append_expire_ts(&mut value10, 110);
+        append_expire_ts(&mut value10, 20);
         kvdb.put_cf(CF_DEFAULT, key1, &value10).unwrap();
 
         let key2 = b"key2";
         let mut value2 = b"value2".to_vec();
-        append_expire_ts(&mut value2, 90);
+        append_expire_ts(&mut value2, 20);
         kvdb.put_cf(CF_DEFAULT, key2, &value2).unwrap();
         let mut value20 = b"value2".to_vec();
-        append_expire_ts(&mut value20, 90);
+        append_expire_ts(&mut value20, 10);
         kvdb.put_cf(CF_DEFAULT, key2, &value20).unwrap();
 
         let key3 = b"key3";
@@ -288,7 +267,7 @@ mod tests {
             ttl_snapshot
                 .get_key_ttl_cf(CF_DEFAULT, &Key::from_encoded_slice(b"key1"), &mut stats)
                 .unwrap(),
-            Some(10)
+            Some(5)
         );
         assert_eq!(
             ttl_snapshot
@@ -316,18 +295,18 @@ mod tests {
 
         let key1 = b"key1";
         let mut value1 = b"value1".to_vec();
-        append_expire_ts(&mut value1, 90);
+        append_expire_ts(&mut value1, 10);
         kvdb.put_cf(CF_DEFAULT, key1, &value1).unwrap();
         let mut value10 = b"value1".to_vec();
-        append_expire_ts(&mut value10, 110);
+        append_expire_ts(&mut value10, 20);
         kvdb.put_cf(CF_DEFAULT, key1, &value10).unwrap();
 
         let key2 = b"key2";
         let mut value2 = b"value2".to_vec();
-        append_expire_ts(&mut value2, 110);
+        append_expire_ts(&mut value2, 20);
         kvdb.put_cf(CF_DEFAULT, key2, &value2).unwrap();
         let mut value20 = b"value2".to_vec();
-        append_expire_ts(&mut value20, 90);
+        append_expire_ts(&mut value20, 10);
         kvdb.put_cf(CF_DEFAULT, key2, &value20).unwrap();
 
         let key3 = b"key3";
@@ -345,7 +324,7 @@ mod tests {
         append_expire_ts(&mut value5, 0);
         kvdb.put_cf(CF_DEFAULT, key5, &value5).unwrap();
         let mut value50 = b"value5".to_vec();
-        append_expire_ts(&mut value50, 90);
+        append_expire_ts(&mut value50, 10);
         kvdb.put_cf(CF_DEFAULT, key5, &value50).unwrap();
 
         let snapshot = engine.snapshot(SnapContext::default()).unwrap();

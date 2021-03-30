@@ -31,7 +31,9 @@ impl WriteBatch<PanicEngine> for PanicWriteBatch {
     fn write_opt(&self, _: &WriteOptions) -> Result<()> {
         panic!()
     }
+}
 
+impl Mutable for PanicWriteBatch {
     fn data_size(&self) -> usize {
         panic!()
     }
@@ -57,9 +59,6 @@ impl WriteBatch<PanicEngine> for PanicWriteBatch {
     fn rollback_to_save_point(&mut self) -> Result<()> {
         panic!()
     }
-}
-
-impl Mutable for PanicWriteBatch {
     fn put(&mut self, key: &[u8], value: &[u8]) -> Result<()> {
         panic!()
     }

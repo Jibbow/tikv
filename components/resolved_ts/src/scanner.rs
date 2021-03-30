@@ -4,7 +4,7 @@ use std::marker::PhantomData;
 use std::sync::Arc;
 
 use engine_traits::KvEngine;
-use kvproto::kvrpcpb::ExtraOp as TxnExtraOp;
+use kvproto::kvrpcpb::{ExtraOp as TxnExtraOp, IsolationLevel};
 use kvproto::metapb::Region;
 use raftstore::router::RaftStoreRouter;
 use raftstore::store::fsm::{ChangeObserver, ObserveID};
@@ -128,7 +128,12 @@ impl<T: 'static + RaftStoreRouter<E>, E: KvEngine> ScannerPool<T, E> {
                     }
                 }
                 ScanMode::LockOnly => {
-                    let mut reader = MvccReader::new(snap, Some(MvccScanMode::Forward), false);
+                    let mut reader = MvccReader::new(
+                        snap,
+                        Some(MvccScanMode::Forward),
+                        false,
+                        IsolationLevel::Si,
+                    );
                     let mut done = false;
                     let mut start = None;
                     while !done && !(task.is_cancelled)() {

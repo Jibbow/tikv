@@ -12,7 +12,6 @@ use grpcio::{
 use pd_client::Error as PdError;
 use security::*;
 
-use fail::fail_point;
 use kvproto::pdpb::*;
 
 use super::mocker::*;
@@ -109,7 +108,6 @@ impl<C: PdMocker + Send + Sync + 'static> Server<C> {
     }
 }
 
-#[allow(unused_mut)]
 fn hijack_unary<F, R, C: PdMocker>(
     mock: &mut PdMock<C>,
     ctx: RpcContext<'_>,
@@ -124,6 +122,7 @@ fn hijack_unary<F, R, C: PdMocker>(
         .as_ref()
         .and_then(|case| f(case.as_ref()))
         .or_else(|| f(mock.default_handler.as_ref()));
+
     match resp {
         Some(Ok(resp)) => ctx.spawn(
             sink.success(resp)
@@ -136,24 +135,11 @@ fn hijack_unary<F, R, C: PdMocker>(
                     .unwrap_or_else(|e| error!("failed to reply: {:?}", e)),
             );
         }
-        None => {
-            let mut status = RpcStatus::new(
+        _ => {
+            let status = RpcStatus::new(
                 RpcStatusCode::UNIMPLEMENTED,
                 Some("Unimplemented".to_owned()),
             );
-            #[allow(clippy::redundant_closure_call)]
-            (|| {
-                fail_point!("connect_leader", |_| {
-                    let key = ctx.request_headers().get(0).unwrap();
-                    // The default option has a metadata named "user-agent" so we check the key here.
-                    let v = if key.0 == "pd-forwarded-host" {
-                        std::str::from_utf8(key.1).unwrap()
-                    } else {
-                        ""
-                    };
-                    status = RpcStatus::new(RpcStatusCode::UNAVAILABLE, Some(v.to_string()));
-                })
-            })();
             ctx.spawn(
                 sink.fail(status)
                     .unwrap_or_else(|e| error!("failed to reply: {:?}", e)),

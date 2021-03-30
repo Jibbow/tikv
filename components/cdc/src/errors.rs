@@ -5,31 +5,30 @@ use std::{error, result};
 
 use engine_traits::Error as EngineTraitsError;
 use kvproto::errorpb::Error as ErrorHeader;
-use thiserror::Error;
 use tikv::storage::kv::{Error as EngineError, ErrorInner as EngineErrorInner};
 use tikv::storage::mvcc::{Error as MvccError, ErrorInner as MvccErrorInner};
 use tikv::storage::txn::{Error as TxnError, ErrorInner as TxnErrorInner};
 use txn_types::Error as TxnTypesError;
 
 /// The error type for cdc.
-#[derive(Debug, Error)]
+#[derive(Debug, Fail)]
 pub enum Error {
-    #[error("Other error {0}")]
-    Other(#[from] Box<dyn error::Error + Sync + Send>),
-    #[error("RocksDB error {0}")]
+    #[fail(display = "Other error {}", _0)]
+    Other(Box<dyn error::Error + Sync + Send>),
+    #[fail(display = "RocksDB error {}", _0)]
     Rocks(String),
-    #[error("IO error {0}")]
-    Io(#[from] IoError),
-    #[error("Engine error {0}")]
-    Engine(#[from] EngineError),
-    #[error("Transaction error {0}")]
-    Txn(#[from] TxnError),
-    #[error("Mvcc error {0}")]
-    Mvcc(#[from] MvccError),
-    #[error("Request error {0:?}")]
+    #[fail(display = "IO error {}", _0)]
+    Io(IoError),
+    #[fail(display = "Engine error {}", _0)]
+    Engine(EngineError),
+    #[fail(display = "Transaction error {}", _0)]
+    Txn(TxnError),
+    #[fail(display = "Mvcc error {}", _0)]
+    Mvcc(MvccError),
+    #[fail(display = "Request error {:?}", _0)]
     Request(ErrorHeader),
-    #[error("Engine traits error {0}")]
-    EngineTraits(#[from] EngineTraitsError),
+    #[fail(display = "Engine traits error {}", _0)]
+    EngineTraits(EngineTraitsError),
 }
 
 macro_rules! impl_from {
@@ -45,8 +44,14 @@ macro_rules! impl_from {
 }
 
 impl_from! {
+    Box<dyn error::Error + Sync + Send> => Other,
     String => Rocks,
+    IoError => Io,
+    EngineError => Engine,
+    TxnError => Txn,
+    MvccError => Mvcc,
     TxnTypesError => Mvcc,
+    EngineTraitsError => EngineTraits,
 }
 
 pub type Result<T> = result::Result<T, Error>;

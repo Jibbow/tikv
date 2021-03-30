@@ -377,8 +377,8 @@ fn test_atomic_basic() {
             0,
         )
         .unwrap();
-    let (prev_val, succeed) = storage
-        .raw_compare_and_swap_atomic(
+    let (ret, not_equal) = storage
+        .raw_compare_and_set_atomic(
             ctx.clone(),
             "default".to_string(),
             b"k1".to_vec(),
@@ -387,10 +387,11 @@ fn test_atomic_basic() {
             0,
         )
         .unwrap();
-    assert!(!succeed);
-    assert_eq!(prev_val, Some(b"v1".to_vec()));
-    let (prev_val, succeed) = storage
-        .raw_compare_and_swap_atomic(
+    assert!(ret.is_some());
+    assert!(not_equal);
+    assert_eq!(b"v1".to_vec(), ret.unwrap());
+    let (ret, not_equal) = storage
+        .raw_compare_and_set_atomic(
             ctx.clone(),
             "default".to_string(),
             b"k1".to_vec(),
@@ -399,8 +400,8 @@ fn test_atomic_basic() {
             0,
         )
         .unwrap();
-    assert!(succeed);
-    assert_eq!(prev_val, Some(b"v1".to_vec()));
+    assert!(ret.is_none());
+    assert!(!not_equal);
     let value = storage
         .raw_get(ctx.clone(), "default".to_string(), b"k1".to_vec())
         .unwrap();

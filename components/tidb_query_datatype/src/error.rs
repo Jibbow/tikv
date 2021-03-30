@@ -1,12 +1,12 @@
 // Copyright 2019 TiKV Project Authors. Licensed under Apache-2.0.
 
-use thiserror::Error;
+use failure::Fail;
 
-#[derive(Debug, Error)]
+#[derive(Debug, Fail)]
 pub enum DataTypeError {
-    #[error("Unsupported type: {name}")]
+    #[fail(display = "Unsupported type: {}", name)]
     UnsupportedType { name: String },
 
-    #[error("Unsupported collation code: {code}")]
+    #[fail(display = "Unsupported collation code: {}", code)]
     UnsupportedCollation { code: i32 },
 }

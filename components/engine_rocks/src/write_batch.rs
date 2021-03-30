@@ -77,7 +77,9 @@ impl engine_traits::WriteBatch<RocksEngine> for RocksWriteBatch {
             .write_opt(self.as_inner(), &opt.into_raw())
             .map_err(Error::Engine)
     }
+}
 
+impl Mutable for RocksWriteBatch {
     fn data_size(&self) -> usize {
         self.wb.data_size()
     }
@@ -109,9 +111,7 @@ impl engine_traits::WriteBatch<RocksEngine> for RocksWriteBatch {
     fn rollback_to_save_point(&mut self) -> Result<()> {
         self.wb.rollback_to_save_point().map_err(Error::Engine)
     }
-}
 
-impl Mutable for RocksWriteBatch {
     fn put(&mut self, key: &[u8], value: &[u8]) -> Result<()> {
         self.wb.put(key, value).map_err(Error::Engine)
     }
@@ -215,7 +215,9 @@ impl engine_traits::WriteBatch<RocksEngine> for RocksWriteBatchVec {
                 .map_err(Error::Engine)
         }
     }
+}
 
+impl Mutable for RocksWriteBatchVec {
     fn data_size(&self) -> usize {
         self.wbs.iter().fold(0, |a, b| a + b.data_size())
     }
@@ -263,9 +265,7 @@ impl engine_traits::WriteBatch<RocksEngine> for RocksWriteBatchVec {
         }
         Err(Error::Engine("no save point".into()))
     }
-}
 
-impl Mutable for RocksWriteBatchVec {
     fn put(&mut self, key: &[u8], value: &[u8]) -> Result<()> {
         self.check_switch_batch();
         self.wbs[self.index].put(key, value).map_err(Error::Engine)

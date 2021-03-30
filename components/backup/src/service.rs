@@ -5,7 +5,6 @@ use futures::{FutureExt, SinkExt, StreamExt, TryFutureExt};
 use grpcio::{self, *};
 use kvproto::backup::*;
 use tikv_util::worker::*;
-use tikv_util::{error, info};
 
 use super::Task;
 

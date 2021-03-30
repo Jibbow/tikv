@@ -5,7 +5,6 @@ use std::path::Path;
 
 use file_system::File;
 use kvproto::encryptionpb::EncryptedContent;
-use tikv_util::box_err;
 
 use super::{Backend, MemAesGcmBackend};
 use crate::AesGcmCrypter;

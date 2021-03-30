@@ -2,9 +2,10 @@
 
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::thread;
+use std::time::Duration;
 
 use kvproto::pdpb::*;
-use pd_client::REQUEST_RECONNECT_INTERVAL;
+use pd_client::RECONNECT_INTERVAL_SEC;
 
 use super::*;
 
@@ -31,7 +32,7 @@ impl Retry {
             return true;
         }
         // let's sleep awhile, so that client will update its connection.
-        thread::sleep(REQUEST_RECONNECT_INTERVAL);
+        thread::sleep(Duration::from_secs(RECONNECT_INTERVAL_SEC));
         false
     }
 }

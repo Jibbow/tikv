@@ -6,23 +6,22 @@ use crate::storage::mvcc::{Error as MvccError, ErrorInner as MvccErrorInner};
 use crate::storage::txn::{Error as TxnError, ErrorInner as TxnErrorInner};
 
 use error_code::{self, ErrorCode, ErrorCodeExt};
-use thiserror::Error;
 
-#[derive(Debug, Error)]
+#[derive(Fail, Debug)]
 pub enum Error {
-    #[error("Region error (will back off and retry) {0:?}")]
+    #[fail(display = "Region error (will back off and retry) {:?}", _0)]
     Region(kvproto::errorpb::Error),
 
-    #[error("Key is locked (will clean up) {0:?}")]
+    #[fail(display = "Key is locked (will clean up) {:?}", _0)]
     Locked(kvproto::kvrpcpb::LockInfo),
 
-    #[error("Coprocessor task terminated due to exceeding the deadline")]
+    #[fail(display = "Coprocessor task terminated due to exceeding the deadline")]
     DeadlineExceeded,
 
-    #[error("Coprocessor task canceled due to exceeding max pending tasks")]
+    #[fail(display = "Coprocessor task canceled due to exceeding max pending tasks")]
     MaxPendingTasksExceeded,
 
-    #[error("{0}")]
+    #[fail(display = "{}", _0)]
     Other(String),
 }
 
@@ -35,7 +34,7 @@ impl From<Box<dyn std::error::Error + Send + Sync>> for Error {
 
 impl From<Error> for tidb_query_common::error::StorageError {
     fn from(err: Error) -> Self {
-        anyhow::Error::from(err).into()
+        failure::Error::from(err).into()
     }
 }
 

@@ -3,8 +3,6 @@
 use std::sync::Arc;
 use std::time::Instant;
 
-use strum::EnumCount;
-
 use crate::iosnoop::{fetch_io_bytes, flush_io_latency_metrics};
 use crate::metrics::IO_BYTES_VEC;
 use crate::IOBytes;
@@ -42,7 +40,7 @@ macro_rules! flush_io_bytes {
 
 pub struct MetricsManager {
     fetcher: BytesFetcher,
-    last_fetch: [IOBytes; IOType::COUNT],
+    last_fetch: [IOBytes; IOType::VARIANT_COUNT],
 }
 
 impl MetricsManager {

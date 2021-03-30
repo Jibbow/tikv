@@ -1,19 +1,18 @@
 // Copyright 2020 TiKV Project Authors. Licensed under Apache-2.0.
 
+use txn_types::{Key, Lock, TimeStamp, WriteType};
+
 use crate::storage::{
+    mvcc::txn::MissingLockAction,
     mvcc::{
-        metrics::MVCC_CHECK_TXN_STATUS_COUNTER_VEC, reader::OverlappedWrite, ErrorInner, LockType,
-        MvccTxn, ReleasedLock, Result, SnapshotReader, TxnCommitRecord,
+        metrics::MVCC_CHECK_TXN_STATUS_COUNTER_VEC, ErrorInner, LockType, MvccTxn, ReleasedLock,
+        Result, TxnCommitRecord,
     },
     Snapshot, TxnStatus,
 };
-use txn_types::{Key, Lock, TimeStamp, Write, WriteType};
 
-// Check whether there's an overlapped write record, and then perform rollback. The actual behavior
-// to do the rollback differs according to whether there's an overlapped write record.
-pub fn check_txn_status_lock_exists(
-    txn: &mut MvccTxn,
-    reader: &mut SnapshotReader<impl Snapshot>,
+pub fn check_txn_status_lock_exists<S: Snapshot>(
+    txn: &mut MvccTxn<S>,
     primary_key: Key,
     mut lock: Lock,
     current_ts: TimeStamp,
@@ -27,7 +26,7 @@ pub fn check_txn_status_lock_exists(
         if force_sync_commit {
             info!(
                 "fallback is set, check_txn_status treats it as a non-async-commit txn";
-                "start_ts" => reader.start_ts,
+                "start_ts" => txn.start_ts,
                 "primary_key" => ?primary_key,
             );
         } else {
@@ -46,7 +45,7 @@ pub fn check_txn_status_lock_exists(
             Ok((TxnStatus::PessimisticRollBack, released))
         } else {
             let released =
-                rollback_lock(txn, reader, primary_key, &lock, is_pessimistic_txn, true)?;
+                txn.check_write_and_rollback_lock(primary_key, &lock, is_pessimistic_txn)?;
             MVCC_CHECK_TXN_STATUS_COUNTER_VEC.rollback.inc();
             Ok((TxnStatus::TtlExpire, released))
         };
@@ -81,9 +80,8 @@ pub fn check_txn_status_lock_exists(
     Ok((TxnStatus::uncommitted(lock, min_commit_ts_pushed), None))
 }
 
-pub fn check_txn_status_missing_lock(
-    txn: &mut MvccTxn,
-    reader: &mut SnapshotReader<impl Snapshot>,
+pub fn check_txn_status_missing_lock<S: Snapshot>(
+    txn: &mut MvccTxn<S>,
     primary_key: Key,
     mismatch_lock: Option<Lock>,
     action: MissingLockAction,
@@ -91,7 +89,10 @@ pub fn check_txn_status_missing_lock(
 ) -> Result<TxnStatus> {
     MVCC_CHECK_TXN_STATUS_COUNTER_VEC.get_commit_info.inc();
 
-    match reader.get_txn_commit_record(&primary_key)? {
+    match txn
+        .reader
+        .get_txn_commit_record(&primary_key, txn.start_ts)?
+    {
         TxnCommitRecord::SingleRecord { commit_ts, write } => {
             if write.write_type == WriteType::Rollback {
                 Ok(TxnStatus::RolledBack)
@@ -103,7 +104,7 @@ pub fn check_txn_status_missing_lock(
         TxnCommitRecord::None { overlapped_write } => {
             if MissingLockAction::ReturnError == action {
                 return Err(ErrorInner::TxnNotFound {
-                    start_ts: reader.start_ts,
+                    start_ts: txn.start_ts,
                     key: primary_key.into_raw()?,
                 }
                 .into());
@@ -112,11 +113,11 @@ pub fn check_txn_status_missing_lock(
                 return Ok(TxnStatus::LockNotExistDoNothing);
             }
 
-            let ts = reader.start_ts;
+            let ts = txn.start_ts;
 
             // collapse previous rollback if exist.
-            if action.collapse_rollback() {
-                collapse_prev_rollback(txn, reader, &primary_key)?;
+            if txn.collapse_rollback {
+                txn.collapse_prev_rollback(primary_key.clone())?;
             }
 
             if let (Some(l), None) = (mismatch_lock, overlapped_write.as_ref()) {
@@ -136,114 +137,5 @@ pub fn check_txn_status_missing_lock(
 
             Ok(TxnStatus::LockNotExist)
         }
-    }
-}
-
-pub fn rollback_lock(
-    txn: &mut MvccTxn,
-    reader: &mut SnapshotReader<impl Snapshot>,
-    key: Key,
-    lock: &Lock,
-    is_pessimistic_txn: bool,
-    collapse_rollback: bool,
-) -> Result<Option<ReleasedLock>> {
-    let overlapped_write = match reader.get_txn_commit_record(&key)? {
-        TxnCommitRecord::None { overlapped_write } => overlapped_write,
-        TxnCommitRecord::SingleRecord { write, .. } if write.write_type != WriteType::Rollback => {
-            panic!("txn record found but not expected: {:?}", txn)
-        }
-        _ => return Ok(txn.unlock_key(key, is_pessimistic_txn)),
-    };
-
-    // If prewrite type is DEL or LOCK or PESSIMISTIC, it is no need to delete value.
-    if lock.short_value.is_none() && lock.lock_type == LockType::Put {
-        txn.delete_value(key.clone(), lock.ts);
-    }
-
-    // Only the primary key of a pessimistic transaction needs to be protected.
-    let protected: bool = is_pessimistic_txn && key.is_encoded_from(&lock.primary);
-    if let Some(write) = make_rollback(reader.start_ts, protected, overlapped_write) {
-        txn.put_write(key.clone(), reader.start_ts, write.as_ref().to_bytes());
-    }
-
-    if collapse_rollback {
-        collapse_prev_rollback(txn, reader, &key)?;
-    }
-
-    Ok(txn.unlock_key(key, is_pessimistic_txn))
-}
-
-pub fn collapse_prev_rollback(
-    txn: &mut MvccTxn,
-    reader: &mut SnapshotReader<impl Snapshot>,
-    key: &Key,
-) -> Result<()> {
-    if let Some((commit_ts, write)) = reader.seek_write(key, reader.start_ts)? {
-        if write.write_type == WriteType::Rollback && !write.as_ref().is_protected() {
-            txn.delete_write(key.clone(), commit_ts);
-        }
-    }
-    Ok(())
-}
-
-/// Generate the Write record that should be written that means to perform a specified rollback
-/// operation.
-pub fn make_rollback(
-    start_ts: TimeStamp,
-    protected: bool,
-    overlapped_write: Option<OverlappedWrite>,
-) -> Option<Write> {
-    match overlapped_write {
-        Some(OverlappedWrite { write, gc_fence }) => {
-            assert!(start_ts > write.start_ts);
-            if protected {
-                Some(write.set_overlapped_rollback(true, Some(gc_fence)))
-            } else {
-                // No need to update the original write.
-                None
-            }
-        }
-        None => Some(Write::new_rollback(start_ts, protected)),
-    }
-}
-
-#[derive(Debug, Copy, Clone, Eq, PartialEq)]
-pub enum MissingLockAction {
-    Rollback,
-    ProtectedRollback,
-    ReturnError,
-}
-
-impl MissingLockAction {
-    pub fn rollback_protect(protect_rollback: bool) -> MissingLockAction {
-        if protect_rollback {
-            MissingLockAction::ProtectedRollback
-        } else {
-            MissingLockAction::Rollback
-        }
-    }
-
-    pub fn rollback(rollback_if_not_exist: bool) -> MissingLockAction {
-        if rollback_if_not_exist {
-            MissingLockAction::ProtectedRollback
-        } else {
-            MissingLockAction::ReturnError
-        }
-    }
-
-    fn collapse_rollback(&self) -> bool {
-        match self {
-            MissingLockAction::Rollback => true,
-            MissingLockAction::ProtectedRollback => false,
-            _ => unreachable!(),
-        }
-    }
-
-    pub fn construct_write(
-        &self,
-        ts: TimeStamp,
-        overlapped_write: Option<OverlappedWrite>,
-    ) -> Option<Write> {
-        make_rollback(ts, !self.collapse_rollback(), overlapped_write)
     }
 }

@@ -26,7 +26,7 @@ fn execute<M: criterion::measurement::Measurement + 'static>(c: &mut criterion::
     c.final_summary();
 }
 
-#[cfg(all(target_os = "linux", target_arch = "x86_64"))]
+#[cfg(target_os = "linux")]
 fn run_bench(measurement: &str) {
     use criterion_perf_events::Perf;
     use perfcnt::linux::HardwareEventType as Hardware;
@@ -52,7 +52,7 @@ fn run_bench(measurement: &str) {
     }
 }
 
-#[cfg(not(all(target_os = "linux", target_arch = "x86_64")))]
+#[cfg(not(target_os = "linux"))]
 fn run_bench(measurement: &str) {
     match measurement {
         "CPU_TIME" => {
